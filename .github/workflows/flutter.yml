@@ -119,36 +119,37 @@ jobs:
           retention-days: 14
 
   # ---------- Windows (runner -> zip) ----------
-  windows:
-    runs-on: windows-2022   # ← 关键：替换掉已退役的 2019
-    steps:
-      - uses: actions/checkout@v4
+  build_windows:
+  runs-on: windows-2022
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          # flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+  steps:
+    - uses: actions/checkout@v4
 
-      - run: flutter --version
-      - run: flutter config --enable-windows-desktop
-      - run: flutter pub get
-      - run: flutter build windows --release
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        # 如果 pubspec 要求 >=3.24.0，可加：
+        # flutter-version: '3.24.0'
+        cache: true
 
-      - name: Zip Windows runner
-        shell: pwsh
-        run: |
-          $out = "out/windows"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
-          $src = "build/windows/x64/runner/Release"
-          Compress-Archive -Path "$src/*" -DestinationPath "$out/windows-runner.zip" -Force
-          Get-ChildItem $out
+    - run: flutter --version
+    - run: flutter config --enable-windows-desktop
+    - run: flutter pub get
+    - run: flutter build windows --release
 
-      - name: Upload Windows zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-runner
-          path: out/windows/windows-runner.zip
-          if-no-files-found: error
-          retention-days: 14
+    - name: Zip Windows runner
+      shell: pwsh
+      run: |
+        $out = "out/windows"
+        New-Item -ItemType Directory -Force -Path $out | Out-Null
+        $src = "build/windows/x64/runner/Release"
+        Compress-Archive -Path "$src/*" -DestinationPath "$out/windows-runner.zip" -Force
+        Get-ChildItem $out
+
+    - name: Upload Windows zip
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-runner
+        path: out/windows/windows-runner.zip
+        if-no-files-found: error
