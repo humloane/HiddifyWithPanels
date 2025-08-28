@@ -12,27 +12,47 @@ concurrency:
   group: build-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# 若你的 pubspec 要求 >=3.24.0，请保持；如希望用最新 stable，可删掉这一行并去掉下面的 flutter-version。
 env:
-  FLUTTER_VERSION: '3.24.0'  # 与 pubspec.yaml 要求一致；若想跟随最新，可删除此行
+  FLUTTER_VERSION: '3.24.0'
 
 jobs:
-  # ---------- Android (APK) ----------
+  # ================= ANDROID =================
   android:
     runs-on: ubuntu-latest
-    # 如需自定义 PUB_CACHE，可在 job 级别再加 env:
-    # env:
-    #   PUB_CACHE: ${{ runner.temp }}/pub-cache
     steps:
       - uses: actions/checkout@v4
+
+      # JDK 17 与 Android/Gradle 最稳组合
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
       - run: flutter --version
+      - run: flutter doctor -v
+
+      # 有时首次构建会卡 License，这一步兜底
+      - name: Accept Android licenses
+        run: yes | sudo $ANDROID_HOME/tools/bin/sdkmanager --licenses || true
+
       - run: flutter pub get
-      - run: flutter build apk --release
+
+      - name: Build APK (release)
+        run: flutter build apk --release
+
+      - name: Check APK exists
+        run: ls -al build/app/outputs/flutter-apk || (echo "APK not found" && exit 1)
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -41,29 +61,43 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # ---------- macOS (.app -> zip) ----------
+  # ================= macOS =================
   macos:
     runs-on: macos-latest
-    # env:
-    #   PUB_CACHE: ${{ runner.temp }}/pub-cache
     steps:
       - uses: actions/checkout@v4
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
       - run: flutter --version
+      - run: flutter doctor -v
+
+      # CocoaPods 初始化（不少 Flutter macOS 项目第一次需要）
+      - name: Prepare CocoaPods
+        run: |
+          sudo gem install cocoapods --no-document || true
+          cd macos
+          pod install --repo-update || true
+          cd ..
+
       - run: flutter config --enable-macos-desktop
-      - run: flutter pub get
-      - run: flutter build macos --release
+      # 无证书场景用 --no-codesign，避免 codesign 报错
+      - name: Build macOS (release, no codesign)
+        run: flutter build macos --release --no-codesign
+
       - name: Zip .app bundle
         run: |
           mkdir -p out/macos
           APP_PATH=$(ls "build/macos/Build/Products/Release/"*.app | head -n 1)
+          if [ -z "$APP_PATH" ]; then echo "No .app found"; ls -al build/macos/Build/Products/Release; exit 1; fi
           ditto -c -k --keepParent "$APP_PATH" out/macos/App-macos.zip
           ls -al out/macos
+
       - name: Upload macOS app
         uses: actions/upload-artifact@v4
         with:
@@ -72,32 +106,44 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # ---------- Linux (bundle -> tar.gz) ----------
+  # ================= LINUX =================
   linux:
     runs-on: ubuntu-latest
-    # env:
-    #   PUB_CACHE: ${{ runner.temp }}/pub-cache
     steps:
       - uses: actions/checkout@v4
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
       - run: flutter --version
       - run: flutter config --enable-linux-desktop
+
       - name: Install Linux build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+          # 若还缺依赖，可在失败日志中按需追加
+
+      - run: flutter doctor -v
       - run: flutter pub get
-      - run: flutter build linux --release
+
+      - name: Build Linux (release)
+        run: flutter build linux --release
+
       - name: Tar Linux bundle
         run: |
           mkdir -p out/linux
+          if [ ! -d build/linux/x64/release/bundle ]; then
+            echo "Linux bundle not found"; ls -R build/linux || true; exit 1;
+          fi
           tar -C build/linux/x64/release -czf out/linux/linux-bundle.tar.gz bundle
           ls -al out/linux
+
       - name: Upload Linux bundle
         uses: actions/upload-artifact@v4
         with:
@@ -106,31 +152,40 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # ---------- Windows (runner -> zip) ----------
+  # ================= WINDOWS =================
   windows:
-    runs-on: windows-2022
-    # env:
-    #   PUB_CACHE: ${{ runner.temp }}/pub-cache
+    runs-on: windows-2022   # 2019 已退役
     steps:
       - uses: actions/checkout@v4
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
       - run: flutter --version
+      - run: flutter doctor -v
       - run: flutter config --enable-windows-desktop
       - run: flutter pub get
-      - run: flutter build windows --release
+      - name: Build Windows (release)
+        run: flutter build windows --release
+
       - name: Zip Windows runner
         shell: pwsh
         run: |
           $out = "out/windows"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           $src = "build/windows/x64/runner/Release"
+          if (-not (Test-Path $src)) {
+            Write-Host "Windows runner path not found"
+            Get-ChildItem -Recurse build/windows | Format-List -Property FullName
+            exit 1
+          }
           Compress-Archive -Path "$src/*" -DestinationPath "$out/windows-runner.zip" -Force
           Get-ChildItem $out
+
       - name: Upload Windows zip
         uses: actions/upload-artifact@v4
         with:
