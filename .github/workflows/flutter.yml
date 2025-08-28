@@ -13,13 +13,15 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FLUTTER_VERSION: '3.24.0'              # 与项目 pubspec.yaml 要求一致
-  PUB_CACHE: ${{ runner.temp }}/pub-cache
+  FLUTTER_VERSION: '3.24.0'  # 与 pubspec.yaml 要求一致；若想跟随最新，可删除此行
 
 jobs:
   # ---------- Android (APK) ----------
   android:
     runs-on: ubuntu-latest
+    # 如需自定义 PUB_CACHE，可在 job 级别再加 env:
+    # env:
+    #   PUB_CACHE: ${{ runner.temp }}/pub-cache
     steps:
       - uses: actions/checkout@v4
       - name: Setup Flutter
@@ -42,6 +44,8 @@ jobs:
   # ---------- macOS (.app -> zip) ----------
   macos:
     runs-on: macos-latest
+    # env:
+    #   PUB_CACHE: ${{ runner.temp }}/pub-cache
     steps:
       - uses: actions/checkout@v4
       - name: Setup Flutter
@@ -71,6 +75,8 @@ jobs:
   # ---------- Linux (bundle -> tar.gz) ----------
   linux:
     runs-on: ubuntu-latest
+    # env:
+    #   PUB_CACHE: ${{ runner.temp }}/pub-cache
     steps:
       - uses: actions/checkout@v4
       - name: Setup Flutter
@@ -103,6 +109,8 @@ jobs:
   # ---------- Windows (runner -> zip) ----------
   windows:
     runs-on: windows-2022
+    # env:
+    #   PUB_CACHE: ${{ runner.temp }}/pub-cache
     steps:
       - uses: actions/checkout@v4
       - name: Setup Flutter
