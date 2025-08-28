@@ -1,0 +1,154 @@
+name: Flutter CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同名分支/PR 的并发控制，避免排队冲突
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 如项目要求 >=3.24.0 可取消下一行注释以固定版本
+  # 统一缓存目录（各 Job 会自动使用）
+  PUB_CACHE: ${{ runner.temp }}/pub-cache
+  FLUTTER_VERSION: '3.24.0'
+
+jobs:
+
+  # ---------- Android (APK) ----------
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - run: flutter --version
+      - run: flutter pub get
+      - run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------- macOS (.app -> zip) ----------
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - run: flutter --version
+      - run: flutter config --enable-macos-desktop
+      - run: flutter pub get
+      - run: flutter build macos --release
+
+      - name: Zip .app bundle
+        run: |
+          mkdir -p out/macos
+          APP_PATH=$(ls "build/macos/Build/Products/Release/"*.app | head -n 1)
+          # .app 是目录，需要压缩后再上传
+          ditto -c -k --keepParent "$APP_PATH" out/macos/App-macos.zip
+          ls -al out/macos
+
+      - name: Upload macOS app
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: out/macos/App-macos.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------- Linux (bundle -> tar.gz) ----------
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - run: flutter --version
+      - run: flutter config --enable-linux-desktop
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+
+      - run: flutter pub get
+      - run: flutter build linux --release
+
+      - name: Tar Linux bundle
+        run: |
+          mkdir -p out/linux
+          tar -C build/linux/x64/release -czf out/linux/linux-bundle.tar.gz bundle
+          ls -al out/linux
+
+      - name: Upload Linux bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-bundle
+          path: out/linux/linux-bundle.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------- Windows (runner -> zip) ----------
+  windows:
+    runs-on: windows-2022   # ← 关键：替换掉已退役的 2019
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - run: flutter --version
+      - run: flutter config --enable-windows-desktop
+      - run: flutter pub get
+      - run: flutter build windows --release
+
+      - name: Zip Windows runner
+        shell: pwsh
+        run: |
+          $out = "out/windows"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $src = "build/windows/x64/runner/Release"
+          Compress-Archive -Path "$src/*" -DestinationPath "$out/windows-runner.zip" -Force
+          Get-ChildItem $out
+
+      - name: Upload Windows zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-runner
+          path: out/windows/windows-runner.zip
+          if-no-files-found: error
+          retention-days: 14
